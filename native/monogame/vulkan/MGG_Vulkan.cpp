@@ -28,6 +28,11 @@
 #include <Windows.h>
 #include <vulkan/vulkan_win32.h>
 #include "vulkan.resources.h"
+#elif defined __APPLE__
+#include <vulkan/vulkan_macos.h>
+#include "vulkan.resources.h"
+#include <CoreFoundation/CoreFoundation.h>
+#include <CoreGraphics/CGDisplayConfiguration.h>
 #endif
 
 #define VK_CHECK_RESULT(vkr)															\
@@ -554,6 +559,7 @@ void MGG_EffectResource_GetBytecode(const char* name, mgbyte*& bytecode, mgint& 
 	bytecode = nullptr;
 	size = 0;
 
+#ifdef _WIN32
 	// Get the handle of this DLL.
 	HMODULE module;
 	::GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCSTR)&MGG_EffectResource_GetBytecode, &module);
@@ -586,6 +592,69 @@ void MGG_EffectResource_GetBytecode(const char* name, mgbyte*& bytecode, mgint& 
 		return;
 
 	bytecode = (mgbyte*)LockResource(global);
+#elif defined __APPLE__
+    CFBundleRef mainBundle = ::CFBundleGetBundleWithIdentifier(CFSTR("com.monogame.native"));
+    if (mainBundle) {
+        CFStringRef id;
+        if (strcmp(name, "AlphaTestEffect") == 0)
+            id = CFSTR(C_AlphaTestEffect);
+        else if (strcmp(name, "BasicEffect") == 0)
+            id = CFSTR(C_BasicEffect);
+        else if (strcmp(name, "DualTextureEffect") == 0)
+            id = CFSTR(C_DualTextureEffect);
+        else if (strcmp(name, "EnvironmentMapEffect") == 0)
+            id = CFSTR(C_EnvironmentMapEffect);
+        else if (strcmp(name, "SkinnedEffect") == 0)
+            id = CFSTR(C_SkinnedEffect);
+        else if (strcmp(name, "SpriteEffect") == 0)
+            id = CFSTR(C_SpriteEffect);
+        
+        CFURLRef resourceURL = ::CFBundleCopyResourceURL(mainBundle, id, CFSTR("mgfxo"), NULL);
+        if (resourceURL) {
+            CFReadStreamRef readStream = ::CFReadStreamCreateWithFile(kCFAllocatorDefault, resourceURL);
+            if (readStream) {
+                if (::CFReadStreamOpen (readStream)) {
+                    if (::CFReadStreamHasBytesAvailable(readStream)) {
+                        CFIndex bufferLength = 1024;
+                        CFIndex totalLength = 0;
+                        char* buffer = (char*)malloc(bufferLength);
+                        char* p = nullptr;
+                        while (::CFReadStreamHasBytesAvailable(readStream)) {
+                            CFIndex bytesRead = ::CFReadStreamRead(readStream, (UInt8*)buffer + totalLength, bufferLength);
+                            if (bytesRead > 0) {
+                                totalLength += bytesRead;
+                                if (totalLength >= bufferLength) {
+                                    bufferLength *= 2;
+                                    p = (char*)realloc(buffer, bufferLength + totalLength);
+                                    if (!p) {
+                                        free(buffer);
+                                        ::CFReadStreamClose(readStream);
+                                        ::CFRelease(readStream);
+                                        ::CFRelease(resourceURL);
+                                        ::CFRelease(mainBundle);
+                                        return;
+                                    }
+                                    buffer = p;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        bytecode = (mgbyte*)malloc(totalLength);
+                        memcpy(bytecode, buffer, totalLength);
+                        size = (mgint)totalLength;
+                        
+                        free(buffer);
+                    }
+                    ::CFReadStreamClose(readStream);
+                }
+                ::CFRelease(readStream);
+            }
+            ::CFRelease(resourceURL);
+        }
+        ::CFRelease(mainBundle);
+    }
+#endif
 }
 
 uint64_t CheckValidationLayerSupport(const std::vector<const char*>& validationLayers)
@@ -646,6 +715,9 @@ MGG_GraphicsSystem* MGG_GraphicsSystem_Create()
 #error Not Implemented!
 #endif
 	instanceExtensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+#if __APPLE__
+    instanceExtensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+#endif
 
 	std::vector<const char*> enabledLayers;
 	enabledLayers.push_back("VK_LAYER_KHRONOS_validation");
@@ -659,6 +731,7 @@ MGG_GraphicsSystem* MGG_GraphicsSystem_Create()
 	instance_create_info.enabledLayerCount = enabledLayers.size();
 	instance_create_info.ppEnabledLayerNames = enabledLayers.data();
 	instance_create_info.pNext = nullptr;
+    instance_create_info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 
 	VkInstance instance = VK_NULL_HANDLE;
 
@@ -793,6 +866,23 @@ void MGG_GraphicsAdapter_GetInfo(MGG_GraphicsAdapter* adapter, MGG_GraphicsAdapt
 	info.CurrentDisplayMode.height = monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top;
 	info.CurrentDisplayMode.format = MGSurfaceFormat::Color;
 
+#elif __APPLE__
+    auto mainDisplayId = CGMainDisplayID();
+    
+    int width = CGDisplayPixelsWide(mainDisplayId);
+    int height = CGDisplayPixelsHigh(mainDisplayId);
+    
+    MGG_DisplayMode mode;
+    mode.width = width;
+    mode.height = height;
+    mode.format = MGSurfaceFormat::Color;
+    
+    info.CurrentDisplayMode.width = width;
+    info.CurrentDisplayMode.height = height;
+    info.CurrentDisplayMode.format = MGSurfaceFormat::Color;
+    
+    info.DisplayModeCount = adapter->modes.size();
+    info.DisplayModes = adapter->modes.data();
 #else
 #error NOT IMPLEMENTED!
 #endif
@@ -826,10 +916,10 @@ static MGG_Texture* CreateDepthTexture(MGG_GraphicsDevice* device, VkFormat form
 	create_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 	create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
+    
 	texture->layout = VK_IMAGE_LAYOUT_UNDEFINED;
 	texture->optimal_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-
+    
 	mggCreateImage(device, &create_info, texture);
 
 	MGVK_TransitionImageLayout(device, texture, 0, texture->optimal_layout);
@@ -852,7 +942,8 @@ static VkImageView CreateImageView(MGG_GraphicsDevice* device, MGG_Texture* text
 	image_view_create_info.subresourceRange.baseMipLevel = 0;
 	image_view_create_info.subresourceRange.levelCount = level_count;
 	image_view_create_info.subresourceRange.baseArrayLayer = 0;
-	image_view_create_info.subresourceRange.layerCount = layer_count;
+	// image_view_create_info.subresourceRange.layerCount = layer_count;
+     image_view_create_info.subresourceRange.layerCount = 1;
 
 	VkImageView view;
 	VkResult res = vkCreateImageView(device->device, &image_view_create_info, NULL, &view);
@@ -1039,16 +1130,25 @@ MGG_GraphicsDevice* MGG_GraphicsDevice_Create(MGG_GraphicsSystem* system, MGG_Gr
 
 	std::vector<const char*> extensions;
 	extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+#ifdef __APPLE__
+    extensions.push_back("VK_KHR_portability_subset");
+#else
 	extensions.push_back(VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME);
+
 
 	VkPhysicalDeviceCustomBorderColorFeaturesEXT customBorderColorFeatures = {};
 	customBorderColorFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT;
 	customBorderColorFeatures.customBorderColors = VK_TRUE;
 	customBorderColorFeatures.customBorderColorWithoutFormat = VK_TRUE;
-
+#endif
+    
 	VkPhysicalDeviceFeatures2 deviceFeatures2 = {};
 	deviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+#ifndef __APPLE__
 	deviceFeatures2.pNext = &customBorderColorFeatures;
+#else
+    deviceFeatures2.pNext = NULL;
+#endif
 	deviceFeatures2.features = device->deviceFeatures;
 
 	VkDeviceCreateInfo deviceCreateInfo = { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
@@ -1347,7 +1447,11 @@ void MGVK_RecreateSwapChain(
 	create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	create_info.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 	create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+#if __APPLE__
+    create_info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+#else
 	create_info.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+#endif
 	create_info.clipped = true;
 	//create_info.pNext = &scalingCreateInfo;
 	res = vkCreateSwapchainKHR(device->device, &create_info, nullptr, &device->swapchain);

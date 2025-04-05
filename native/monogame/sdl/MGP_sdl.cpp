@@ -236,13 +236,23 @@ const char* MGP_Platform_MakePath(const char* location, const char* path)
 
     if (location[0])
     {
+#if _WIN32
         strcpy_s(fpath, length, location);
         strcat_s(fpath, length, MG_PATH_SEPARATOR);
         strcat_s(fpath, length, path);
+#else
+        strlcpy(fpath, location, length);
+        strlcat(fpath, MG_PATH_SEPARATOR, length);
+        strlcat(fpath, path, length);
+#endif
     }
     else
     {
+#if _WIN32
         strcpy_s(fpath, length, path);
+#else
+        strlcpy(fpath, path, length);
+#endif
     }
 
     return fpath;
@@ -622,9 +632,13 @@ mgbool MGP_Platform_PollEvent(MGP_Platform* platform, MGP_Event& event_)
         {
             event_.Type = MGEventType::DropFile;
             event_.Drop.Window = MGP_WindowFromId(platform, ev.drop.windowID);
-
+#if _WIN32
             static char TempPath[_MAX_PATH];
             strcpy_s(TempPath, _MAX_PATH, ev.drop.file);
+#else
+            static char TempPath[PATH_MAX];
+            strlcpy(TempPath, ev.drop.file, PATH_MAX);
+#endif
             SDL_free(ev.drop.file);
 
             event_.Drop.File = TempPath;
@@ -977,8 +991,11 @@ mgbool MGP_GamePad_SetVibration(MGP_Platform* platform, mgint identifer, mgfloat
     auto pair = platform->controllers.find(identifer);
     if (pair == platform->controllers.end())
         return false;
-
+#if _WIN32
     auto supported = SDL_GameControllerRumble(pair->second, (UINT16)(leftMotor * 0xFFFF), (UINT16)(rightMotor * 0xFFFF), INT_MAX);
+#else
+    auto supported = SDL_GameControllerRumble(pair->second, (Uint16)(leftMotor * 0xFFFF), (Uint16)(rightMotor * 0xFFFF), INT_MAX);
+#endif
     return supported == 0;
 }
 
