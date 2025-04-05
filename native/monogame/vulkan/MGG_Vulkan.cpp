@@ -942,8 +942,8 @@ static VkImageView CreateImageView(MGG_GraphicsDevice* device, MGG_Texture* text
 	image_view_create_info.subresourceRange.baseMipLevel = 0;
 	image_view_create_info.subresourceRange.levelCount = level_count;
 	image_view_create_info.subresourceRange.baseArrayLayer = 0;
-	// image_view_create_info.subresourceRange.layerCount = layer_count;
-     image_view_create_info.subresourceRange.layerCount = 1;
+	// image_view_create_info.subresourceRange.layerCount = layer_count; // caused a validation error and crash
+        image_view_create_info.subresourceRange.layerCount = 1;  
 
 	VkImageView view;
 	VkResult res = vkCreateImageView(device->device, &image_view_create_info, NULL, &view);
