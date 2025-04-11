@@ -521,7 +521,7 @@ namespace MonoGame.Effect
                     SamplerStateInfo state;
                     if (shaderResult.ShaderInfo.SamplerStates.TryGetValue(s.samplerName, out state))
                     {
-                        s.parameterName = s.parameterName ?? state.TextureName;
+                        s.parameterName = state.TextureName ?? s.parameterName;
                         s.state = state.State;
                         samplers.Add(s);
                         continue;
